@@ -127,6 +127,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div style="font-size:11px;color:#8C7B6E">智慧記帳 · 分帳 · 提醒</div>
     </div>
     <div id="header-alert"></div>
+    <div id="sync-status" style="font-size:11px;color:#8C7B6E;margin-top:2px">⟳ 載入中...</div>
   </div>
 
   <div class="tab-row">
@@ -212,18 +213,57 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div class="modal" id="modal-inner"></div>
 </div>
 
-<script>
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getFirestore, doc, getDoc, setDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAHi2by7G_po-8bZe-MdoCHaa41sYl8FoI",
+  authDomain: "finance-3f427.firebaseapp.com",
+  projectId: "finance-3f427",
+  storageBucket: "finance-3f427.firebasestorage.app",
+  messagingSenderId: "917904589257",
+  appId: "1:917904589257:web:bf4fa8369cc08a81b72818"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const DOC_ID = 'main';
+
 const CAT_IC={'餐飲':'🍜','交通':'🚇','購物':'🛍','娛樂':'🎬','生活':'🏠','其他':'✦'};
 const CAT_BG={'餐飲':'#FFF1B5','交通':'#C1DBE8','購物':'#FFF1B5','娛樂':'#C1DBE8','生活':'#FFF1B5','其他':'#EDE8E0'};
 const BAR_COLS=['#43302E','#3A6E8A','#8DB8D0','#D4A800','#C1DBE8','#2C1F1D'];
-const LS=(k,d)=>{try{return JSON.parse(localStorage.getItem(k)||'null')||d}catch(e){return d}};
-const SS=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
 
-let entries=LS('sx_entries',[]);
-let fixedItems=LS('sx_fixed',[]);
-let settings=LS('sx_settings',{budgetPersonal:0,budgetCouple:0,bfDebtSince:null});
+let entries=[];
+let fixedItems=[];
+let settings={budgetPersonal:0,budgetCouple:0,bfDebtSince:null};
 let curMonth='';
 let selType_='p',selPayer_='me',catFilter='all';
+let _saving=false;
+
+function showSyncStatus(msg,color){
+  let el=document.getElementById('sync-status');
+  if(!el)return;
+  el.textContent=msg;el.style.color=color;
+  if(color==='#059669')setTimeout(()=>{el.textContent='☁ 已同步'},2000);
+}
+
+async function saveToCloud(){
+  if(_saving)return;_saving=true;
+  showSyncStatus('⟳ 儲存中...','#8C7B6E');
+  try{
+    await setDoc(doc(db,'帳本',DOC_ID),{entries,fixedItems,settings,updatedAt:Date.now()});
+    showSyncStatus('☁ 已同步','#059669');
+  }catch(e){showSyncStatus('⚠ 儲存失敗','#C0392B')}
+  _saving=false;
+}
+
+const SS=async(k,v)=>{
+  if(k==='sx_entries')entries=v;
+  else if(k==='sx_fixed')fixedItems=v;
+  else if(k==='sx_settings')settings=v;
+  await saveToCloud();
+};
 
 const fmt=n=>'NT$'+Math.round(n).toLocaleString();
 const getM=()=>entries.filter(e=>e.date&&e.date.startsWith(curMonth));
@@ -233,6 +273,22 @@ const daysLeft=()=>{let d=new Date();let end=new Date(d.getFullYear(),d.getMonth
 
 // init current month
 (()=>{let d=new Date();curMonth=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')})();
+
+// Load from Firebase and listen for real-time changes
+onSnapshot(doc(db,'帳本',DOC_ID),(snap)=>{
+  if(snap.exists()){
+    const data=snap.data();
+    entries=data.entries||[];
+    fixedItems=data.fixedItems||[];
+    settings=data.settings||{budgetPersonal:0,budgetCouple:0,bfDebtSince:null};
+  }
+  renderAll();
+  showSyncStatus('☁ 已同步','#059669');
+},(err)=>{
+  console.error(err);
+  showSyncStatus('⚠ 連線失敗','#C0392B');
+  renderAll();
+});
 
 function chMonth(d){
   let[y,m]=curMonth.split('-').map(Number);
@@ -377,10 +433,12 @@ function renderSettle(){
     </div>`;
 }
 
-function markBfPaid(){
+async function markBfPaid(){
   const shared=getM().filter(e=>e.type==='s'&&e.payer==='me');
   shared.forEach(e=>{const idx=entries.findIndex(x=>x.id===e.id);if(idx>=0)entries[idx].payer='bf'});
-  settings.bfDebtSince=null;SS('sx_entries',entries);SS('sx_settings',settings);renderAll();
+  settings.bfDebtSince=null;
+  await saveToCloud();
+  renderAll();
 }
 
 function renderStats(){
@@ -573,33 +631,32 @@ function selPayer(p){
   document.getElementById('pm').className='type-btn'+(p==='me'?' sel-me':'');
   document.getElementById('pb').className='type-btn'+(p==='bf'?' sel-bf':'');
 }
-function saveEntry(){
+async function saveEntry(){
   const name=document.getElementById('fn').value.trim();
   const amt=parseFloat(document.getElementById('fa').value);
   const date=document.getElementById('fd').value;
   if(!name||!amt||amt<=0||!date)return;
-  if(selType_==='s'&&selPayer_==='me'&&!settings.bfDebtSince){settings.bfDebtSince=date;SS('sx_settings',settings)}
+  if(selType_==='s'&&selPayer_==='me'&&!settings.bfDebtSince){settings.bfDebtSince=date;}
   entries.push({id:Date.now().toString(36),name,amt,cat:document.getElementById('fc').value,type:selType_,payer:selType_==='s'?selPayer_:null,date});
-  SS('sx_entries',entries);closeModal();renderAll();
+  await SS('sx_entries',entries);closeModal();renderAll();
 }
-function delEntry(id){entries=entries.filter(e=>e.id!==id);SS('sx_entries',entries);renderAll()}
-function saveFixed(){
+async function delEntry(id){entries=entries.filter(e=>e.id!==id);await SS('sx_entries',entries);renderAll()}
+async function saveFixed(){
   const name=document.getElementById('ffn').value.trim();
   const amt=parseFloat(document.getElementById('ffa').value);
   const day=parseInt(document.getElementById('ffd').value);
   if(!name||!amt||!day||day<1||day>31)return;
   fixedItems.push({id:Date.now().toString(36),name,amt,day,cat:document.getElementById('ffc').value});
-  SS('sx_fixed',fixedItems);closeModal();renderAll();
+  await SS('sx_fixed',fixedItems);closeModal();renderAll();
 }
-function delFixed(id){fixedItems=fixedItems.filter(f=>f.id!==id);SS('sx_fixed',fixedItems);renderFixed();renderAlerts()}
-function saveBudget(type){
+async function delFixed(id){fixedItems=fixedItems.filter(f=>f.id!==id);await SS('sx_fixed',fixedItems);renderFixed();renderAlerts()}
+async function saveBudget(type){
   const amt=parseFloat(document.getElementById('fba').value);
   if(!amt||amt<=0)return;
   if(type==='personal')settings.budgetPersonal=amt;
   else settings.budgetCouple=amt;
-  SS('sx_settings',settings);closeModal();renderAll();
+  await SS('sx_settings',settings);closeModal();renderAll();
 }
-renderAll();
 </script>
 </body>
 </html>
