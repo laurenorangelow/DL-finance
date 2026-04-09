@@ -657,6 +657,23 @@ async function saveBudget(type){
   else settings.budgetCouple=amt;
   await SS('sx_settings',settings);closeModal();renderAll();
 }
+
+// Expose functions to global scope for onclick handlers
+window.switchTab=switchTab;
+window.chMonth=chMonth;
+window.fCat=fCat;
+window.openModal=openModal;
+window.closeModal=closeModal;
+window.closeBg=closeBg;
+window.selType=selType;
+window.selPayer=selPayer;
+window.saveEntry=saveEntry;
+window.delEntry=delEntry;
+window.saveFixed=saveFixed;
+window.delFixed=delFixed;
+window.saveBudget=saveBudget;
+window.markBfPaid=markBfPaid;
+window.exportCSV=exportCSV;
 </script>
 </body>
 </html>
